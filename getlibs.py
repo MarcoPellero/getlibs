@@ -17,6 +17,12 @@ class Process:
 			cmd_str += "..."
 		
 		return f"Process(pid={self.pid}, cmd={cmd_str})"
+	
+	def __eq__(self, other: object) -> bool:
+		return isinstance(other, Process) and self.pid == other.pid
+
+	def __hash__(self):
+		return self.pid
 
 def get_pids(client: docker.DockerClient, container_id: str) -> list[Process]:
 	top = client.containers.get(container_id).top()
