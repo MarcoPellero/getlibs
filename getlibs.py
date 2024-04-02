@@ -121,6 +121,9 @@ def main():
 			for chunk in bits:
 				f.write(chunk)
 		
+		# Unpack the tarball
+		os.system(f"tar -xf {name}")
+		
 		# Set the same permissions as the original file
 		os.chmod(name, stat["mode"])
 
