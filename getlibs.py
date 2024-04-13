@@ -5,6 +5,7 @@ import argparse
 import socket
 import time
 import os
+import subprocess
 
 class Process:
 	def __init__(self, pid: int, cmd: str):
@@ -50,25 +51,42 @@ def choose_pid(procs: list[Process]) -> int:
 	
 	return pid
 
+def build_from_compose() -> str:
+	result = subprocess.run(["docker", "compose", "up", "--build", "-d"], capture_output=True)
+	service_name = result.stdout.decode().split("#1 [")[1].split(']', 1)[0].split()[0]
+	print(f"Service: {service_name}")
+
+	result = subprocess.run(["docker", "compose", "ps", "-q"], capture_output=True)
+	return result.stdout.decode().strip()
+
+def build_from_dockerfile(client: docker.DockerClient, args: argparse.Namespace) -> str:
+	if is_pwnred():
+		args.privileged = True
+		print("Detected pwn.red/jail Dockerfile, running as privileged")
+	
+	img, _ = client.images.build(path=".")
+	print(f"Image: {img.id}")
+
+	container = client.containers.run(img, detach=True, ports={args.port: args.port}, privileged=args.privileged)
+	return container.id
+
 def main():
 	parser = argparse.ArgumentParser()
 	parser.add_argument("-p", "--port", help="Port to expose and connect to", type=int, required=True)
 	parser.add_argument("--privileged", help="Run the container as privileged", action="store_true")
 	args = parser.parse_args()
 
-	if is_pwnred():
-		args.privileged = True
-		print("Detected pwn.red/jail Dockerfile, running as privileged")
-
 	client = docker.from_env()
+	container_id = ""
+	if "docker-compose.yml" in os.listdir():
+		print("Detected docker-compose.yml")
+		container_id = build_from_compose()
+	else:
+		container_id = build_from_dockerfile(client, args)
 
-	img, _ = client.images.build(path=".")
-	print(f"Image: {img.id}")
+	print(f"Container: {container_id}")
 
-	container = client.containers.run(img, detach=True, ports={args.port: args.port}, privileged=args.privileged)
-	print(f"Container: {container.id}")
-
-	before = get_pids(client, container.id)
+	before = get_pids(client, container_id)
 	print(f"PIDs before connecting: {[proc.pid for proc in before]}")
 
 	sleep_ms = 50
@@ -79,7 +97,7 @@ def main():
 	sock = socket.socket()
 	sock.connect(("localhost", args.port))
 
-	after = get_pids(client, container.id)
+	after = get_pids(client, container_id)
 	print(f"PIDs after connecting: {[proc.pid for proc in after]}")
 
 	new_procs = list(set(after) - set(before))
@@ -90,7 +108,7 @@ def main():
 		target_pid = choose_pid(new_procs)
 		if target_pid == -1:
 			print("Stopping container")
-			client.containers.get(container.id).stop()
+			client.containers.get(container_id).stop()
 			return
 	else:
 		target_pid = new_procs[0].pid
@@ -122,7 +140,7 @@ def main():
 	for name, path in zip(lib_names, libraries):
 		print(f"Copying {path}")
 
-		bits, stat = client.containers.get(container.id).get_archive(path)
+		bits, stat = client.containers.get(container_id).get_archive(path)
 		with open(name, "wb") as f:
 			for chunk in bits:
 				f.write(chunk)
@@ -134,7 +152,7 @@ def main():
 		os.chmod(name, stat["mode"])
 
 	print("Stopping container")
-	client.containers.get(container.id).stop()
+	client.containers.get(container_id).kill()
 
 if __name__ == "__main__":
 	main()
