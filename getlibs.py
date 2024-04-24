@@ -94,6 +94,13 @@ def main():
 	sock = socket.socket()
 	sock.connect(("localhost", args.port))
 
+	# Wait for the target process to start completely
+	# Initially, this PID will be of the jail/socat/whatever process after it's fork()'ed
+	# We want to wait for it to execve() our program before reading its maps, or we'll get the wrong libs
+	sleep_ms = 50
+	print(f"Sleeping for {sleep_ms}ms to allow the process to start completely")
+	time.sleep(sleep_ms / 1000)
+
 	after = get_pids(client, container_id)
 	print(f"PIDs after connecting: {[proc.pid for proc in after]}")
 
@@ -108,15 +115,9 @@ def main():
 			client.containers.get(container_id).stop()
 			return
 	else:
-		target_pid = new_procs[0].pid
-		print(f"Target PID: {target_pid}")
-
-	# Wait for the target process to start completely
-	# Initially, this PID will be of the jail/socat/whatever process after it's fork()'ed
-	# We want to wait for it to execve() our program before reading its maps, or we'll get the wrong libs
-	sleep_ms = 50
-	print(f"Sleeping for {sleep_ms}ms to allow the process to start completely")
-	time.sleep(sleep_ms / 1000)
+		proc = new_procs[0]
+		target_pid = proc.pid
+		print(f"Target PID: {target_pid} ({proc.cmd})")
 
 	print("Reading process maps")
 	with open(f"/proc/{target_pid}/maps") as f:
