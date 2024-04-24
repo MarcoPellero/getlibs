@@ -52,10 +52,7 @@ def choose_pid(procs: list[Process]) -> int:
 	return pid
 
 def build_from_compose() -> str:
-	result = subprocess.run(["docker", "compose", "up", "--build", "-d"], capture_output=True)
-	service_name = result.stdout.decode().split("#1 [")[1].split(']', 1)[0].split()[0]
-	print(f"Service: {service_name}")
-
+	subprocess.run(["docker", "compose", "up", "--build", "-d"])
 	result = subprocess.run(["docker", "compose", "ps", "-q"], capture_output=True)
 	return result.stdout.decode().strip()
 
