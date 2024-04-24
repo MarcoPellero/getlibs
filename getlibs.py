@@ -120,8 +120,12 @@ def main():
 		print(f"Target PID: {target_pid} ({proc.cmd})")
 
 	print("Reading process maps")
-	with open(f"/proc/{target_pid}/maps") as f:
-		maps = f.read()
+	try:
+		with open(f"/proc/{target_pid}/maps") as f:
+			maps = f.read()
+	except PermissionError:
+		print("Error: Permission denied; trying again with sudo")
+		maps = subprocess.run(["sudo", "cat", f"/proc/{target_pid}/maps"], capture_output=True).stdout.decode()
 	
 	maps = maps.split('\n')
 	map_names = list(set([m.split()[-1] for m in maps if m]))
