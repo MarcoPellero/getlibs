@@ -67,6 +67,19 @@ def build_from_dockerfile(client: docker.DockerClient, args: argparse.Namespace)
 	container = client.containers.run(img, detach=True, ports={args.port: args.port}, privileged=args.privileged)
 	return container.id
 
+def get_libs(mapfile: str) -> list[str]:
+	# file structure is:
+	# address perms offset dev inode pathname
+	# pathname can be blank, for mmap()'d memory
+ 
+	maps = [m.split() for m in mapfile.split('\n')]
+	maps = [m for m in maps if len(m) == 6] # filter out mmap()'d memory
+	libs = [m[5] for m in maps if not m[5].startswith('[')] # filter out [stack], [heap], [vdso], etc.
+	libs = list(set(libs)) # remove duplicates
+	libs = libs[1:] # remove the executable itself (i hope this always works..)
+
+	return libs
+
 def main():
 	parser = argparse.ArgumentParser()
 	parser.add_argument("-p", "--port", help="Port to expose and connect to", type=int, required=True)
@@ -127,16 +140,13 @@ def main():
 		print("Error: Permission denied; trying again with sudo")
 		maps = subprocess.run(["sudo", "cat", f"/proc/{target_pid}/maps"], capture_output=True).stdout.decode()
 	
-	maps = maps.split('\n')
-	map_names = list(set([m.split()[-1] for m in maps if m]))
+	libraries = get_libs(maps)
+	lib_names = [lib.split('/')[-1] for lib in libraries]
+	print(f"Libraries: {lib_names}")
 
-	libraries = [m for m in map_names if "lib" in m]
 	if is_pwnred():
 		print("Detected pwn.red/jail Dockerfile, fixing library paths for its chroot at /srv/")
 		libraries = [f"/srv{path}" for path in libraries]
-	
-	lib_names = [lib.split('/')[-1] for lib in libraries]
-	print(f"Libraries: {lib_names}")
 
 	print("Copying libraries")
 	for name, path in zip(lib_names, libraries):
