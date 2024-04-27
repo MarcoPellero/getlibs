@@ -75,7 +75,7 @@ def get_libs(mapfile: str) -> list[str]:
 	maps = [m.split() for m in mapfile.split('\n')]
 	maps = [m for m in maps if len(m) == 6] # filter out mmap()'d memory
 	libs = [m[5] for m in maps if not m[5].startswith('[')] # filter out [stack], [heap], [vdso], etc.
-	libs = list(set(libs)) # remove duplicates
+	libs = list(dict.fromkeys(libs)) # remove duplicates
 	libs = libs[1:] # remove the executable itself (i hope this always works..)
 
 	return libs
