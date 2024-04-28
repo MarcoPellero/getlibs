@@ -6,30 +6,32 @@ import socket
 import time
 import os
 import subprocess
+import psutil
 
-class Process:
-	def __init__(self, pid: int, cmd: str):
-		self.pid = pid
-		self.cmd = cmd
-	
-	def __repr__(self) -> str:
-		cmd_str = self.cmd[:10]
-		if len(self.cmd) > 10:
-			cmd_str += "..."
-		
-		return f"Process(pid={self.pid}, cmd={cmd_str})"
-	
-	def __eq__(self, other: object) -> bool:
-		return isinstance(other, Process) and self.pid == other.pid
-
-	def __hash__(self):
-		return self.pid
-
-def get_pids(client: docker.DockerClient, container_id: str) -> list[Process]:
+def get_procs(client: docker.DockerClient, container_id: str) -> list[psutil.Process]:
 	top = client.containers.get(container_id).top()
-	processes = top["Processes"]
-	pid_idx, cmd_idx = 1, -1
-	return [Process(int(proc[pid_idx]), proc[cmd_idx]) for proc in processes]
+	procs = top["Processes"]
+	pids = [int(proc[1]) for proc in procs]
+	return [psutil.Process(pid) for pid in pids]
+
+def choose_proc(procs: list[psutil.Process]) -> psutil.Process:
+	print("Multiple new processes detected, please choose the target PID:")
+	print("\t-1: Stop the container")
+	for proc in procs:
+		print(f"\t{proc.pid}: {' '.join(proc.cmdline())}")
+
+	pid = int(input("PID: "))
+	if pid == -1:
+		return None
+
+	proc = next((proc for proc in procs if proc.pid == pid), None)
+	if proc is None:
+		print("Invalid PID; stopping the container")
+	
+	return proc
+
+def find_target_proc() -> psutil.Process:
+	...
 
 def is_pwnred() -> bool:
 	if os.path.exists("./Dockerfile"):
@@ -37,24 +39,6 @@ def is_pwnred() -> bool:
 			return "FROM pwn.red/jail" in f.read()
 	
 	return False
-
-def choose_pid(procs: list[Process]) -> int:
-	print("Multiple new processes detected, please choose the target PID:")
-	for i, proc in enumerate(procs):
-		print(f"\t{proc.pid}: {proc.cmd}")
-	
-	print("\t-1: Stop the container")
-	pid = int(input("PID: "))
-	if pid != -1 and pid not in map(lambda p: p.pid, procs):
-		print("Invalid PID; stopping the container")
-		pid = -1
-	
-	return pid
-
-def build_from_compose() -> str:
-	subprocess.run(["docker", "compose", "up", "--build", "-d"])
-	result = subprocess.run(["docker", "compose", "ps", "-q"], capture_output=True)
-	return result.stdout.decode().strip()
 
 def build_from_dockerfile(client: docker.DockerClient, args: argparse.Namespace) -> str:
 	if is_pwnred():
@@ -66,6 +50,11 @@ def build_from_dockerfile(client: docker.DockerClient, args: argparse.Namespace)
 
 	container = client.containers.run(img, detach=True, ports={args.port: args.port}, privileged=args.privileged)
 	return container.id
+
+def build_from_compose() -> str:
+	subprocess.run(["docker", "compose", "up", "--build", "-d"])
+	result = subprocess.run(["docker", "compose", "ps", "-q"], capture_output=True)
+	return result.stdout.decode().strip()
 
 def get_libs(mapfile: str) -> list[str]:
 	# file structure is:
@@ -96,7 +85,7 @@ def main():
 
 	print(f"Container: {container_id}")
 
-	before = get_pids(client, container_id)
+	before = get_procs(client, container_id)
 	print(f"PIDs before connecting: {[proc.pid for proc in before]}")
 
 	sleep_ms = 50
@@ -114,7 +103,7 @@ def main():
 	print(f"Sleeping for {sleep_ms}ms to allow the process to start completely")
 	time.sleep(sleep_ms / 1000)
 
-	after = get_pids(client, container_id)
+	after = get_procs(client, container_id)
 	print(f"PIDs after connecting: {[proc.pid for proc in after]}")
 
 	new_procs = list(set(after) - set(before))
@@ -122,23 +111,22 @@ def main():
 
 	if len(new_procs) != 1:
 		print("Error: Expected exactly one new process")
-		target_pid = choose_pid(new_procs)
-		if target_pid == -1:
+		target_proc = choose_proc(new_procs)
+		if target_proc is None:
 			print("Stopping container")
 			client.containers.get(container_id).stop()
 			return
 	else:
-		proc = new_procs[0]
-		target_pid = proc.pid
-		print(f"Target PID: {target_pid} ({proc.cmd})")
+		target_proc = new_procs[0]
+		print(f"Target process: PID={target_proc.pid}; CMD=({' '.join(target_proc.cmdline())})")
 
 	print("Reading process maps")
 	try:
-		with open(f"/proc/{target_pid}/maps") as f:
+		with open(f"/proc/{target_proc.pid}/maps") as f:
 			maps = f.read()
 	except PermissionError:
 		print("Error: Permission denied; trying again with sudo")
-		maps = subprocess.run(["sudo", "cat", f"/proc/{target_pid}/maps"], capture_output=True).stdout.decode()
+		maps = subprocess.run(["sudo", "cat", f"/proc/{target_proc.pid}/maps"], capture_output=True).stdout.decode()
 	
 	libraries = get_libs(maps)
 	lib_names = [lib.split('/')[-1] for lib in libraries]
