@@ -30,9 +30,6 @@ def choose_proc(procs: list[psutil.Process]) -> psutil.Process:
 	
 	return proc
 
-def find_target_proc() -> psutil.Process:
-	...
-
 def is_pwnred() -> bool:
 	if os.path.exists("./Dockerfile"):
 		with open("./Dockerfile") as f:
