@@ -78,6 +78,7 @@ def main():
 		print("Detected docker-compose.yml")
 		container_id = build_from_compose()
 	else:
+		print("Building Dockerfile")
 		container_id = build_from_dockerfile(client, args)
 
 	print(f"Container: {container_id}")
