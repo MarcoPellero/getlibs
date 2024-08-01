@@ -7,6 +7,7 @@ import time
 import os
 import subprocess
 import psutil
+import atexit
 
 def get_procs(client: docker.DockerClient, container_id: str) -> list[psutil.Process]:
 	top = client.containers.get(container_id).top()
@@ -101,6 +102,7 @@ def main():
 		container_id = build_from_dockerfile(client, args)
 
 	print(f"Container: {container_id}")
+	atexit.register(lambda: client.containers.get(container_id).kill())
 
 	before = get_procs(client, container_id)
 	print(f"PIDs before connecting: {[proc.pid for proc in before]}")
