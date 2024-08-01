@@ -17,17 +17,43 @@ def get_procs(container: docker.models.containers.Container) -> list[psutil.Proc
 	pids = [int(proc[1]) for proc in procs]
 	return [psutil.Process(pid) for pid in pids]
 
-def choose_proc(procs: list[psutil.Process]) -> psutil.Process:
+def choose_proc(before: list[psutil.Process], after: list[psutil.Process], args: argparse.Namespace) -> psutil.Process:
+	new = list(set(after) - set(before))
+	print(f"New PIDs: {[proc.pid for proc in new]}")
+	if len(new) == 1:
+		return new[0]
+
+	if not args.no_proc_heuristics:
+		"""
+		could use a command blacklist for socat, socaz, nsjail, xinetd, ecc...
+		but we can also bypass these using a more general solution of looking at parents and children
+		neither of these work too well for a binary that spawns a child with different libs, and you might want to
+		get both of their libs, but that's what this option is for: you can disable it and explicit the target process
+
+		just getting the highest pid doesn't work because they wrap around after reaching a pid_max value (/proc/sys/kernel/pid_max)
+		pid_max isn't necessarily that high; it's 4M~ on my pc, 32k~ & 64k~ for many other people
+		i get 600k as pids right now and i've started my computer just a few hours ago :P
+		it would be very rare for pids to wrap around HERE, but if it didn't happen and it wasn't handled, someone would have a very bad day if they didn't notice :/
+		"""
+
+		print("Warning: the proc-heuristics option is set to TRUE (default); using heuristics to determine the target process. Disable with --no-proc-heuristics")
+		leaves = [proc for proc in new if not proc.children()]
+		if len(leaves) == 1:
+			return leaves[0]
+		
+		print(f"Couldn't determine target process; multiple 'leaf' (childless) processes found: {leaves}")
+		print("Reverting to manual selection")
+
 	print("Multiple new processes detected, please choose the target PID:")
 	print("\t-1: Stop the container")
-	for proc in procs:
+	for proc in new:
 		print(f"\t{proc.pid}: {' '.join(proc.cmdline())}")
 
 	pid = int(input("PID: "))
 	if pid == -1:
 		return None
 
-	proc = next((proc for proc in procs if proc.pid == pid), None)
+	proc = next((proc for proc in new if proc.pid == pid), None)
 	if proc is None:
 		print("Invalid PID; stopping the container")
 	
@@ -137,6 +163,7 @@ def main():
 	parser = argparse.ArgumentParser()
 	parser.add_argument("-p", "--port", help="Port to expose and connect to", type=int, required=True)
 	parser.add_argument("--privileged", help="Run the container as privileged", action="store_true")
+	parser.add_argument("--no-proc-heuristics", help="Disable usage of heuristics to determine the target process if unsure", action="store_true")
 	args = parser.parse_args()
 
 	client = docker.from_env()
@@ -164,17 +191,7 @@ def main():
 	after = get_procs(container)
 	print(f"PIDs after connecting: {[proc.pid for proc in after]}")
 
-	new_procs = list(set(after) - set(before))
-	print(f"New PIDs: {[proc.pid for proc in new_procs]}")
-
-	if len(new_procs) != 1:
-		print("Error: Expected exactly one new process")
-		target_proc = choose_proc(new_procs)
-		if target_proc is None:
-			return
-	else:
-		target_proc = new_procs[0]
-		print(f"Target process: PID={target_proc.pid}; CMD=({' '.join(target_proc.cmdline())})")
+	target_proc = choose_proc(before, after, args)
 
 	print("Reading process maps")
 	maps = read_super(f"/proc/{target_proc.pid}/maps")
