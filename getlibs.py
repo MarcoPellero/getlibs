@@ -6,11 +6,15 @@ import socket
 import time
 import os
 import subprocess
+import docker.errors
+import docker.models
+import docker.models.configs
+import docker.models.containers
 import psutil
 import atexit
 
-def get_procs(client: docker.DockerClient, container_id: str) -> list[psutil.Process]:
-	top = client.containers.get(container_id).top()
+def get_procs(container: docker.models.containers.Container) -> list[psutil.Process]:
+	top = container.top()
 	procs = top["Processes"]
 	pids = [int(proc[1]) for proc in procs]
 	return [psutil.Process(pid) for pid in pids]
@@ -93,18 +97,38 @@ def main():
 	args = parser.parse_args()
 
 	client = docker.from_env()
-	container_id = ""
-	if "docker-compose.yml" in os.listdir():
-		print("Detected docker-compose.yml")
-		container_id = build_from_compose()
-	else:
-		print("Building Dockerfile")
-		container_id = build_from_dockerfile(client, args)
+	container = None
+	try:
+		if "docker-compose.yml" in os.listdir():
+			print("Detected docker-compose.yml")
+			container_id = build_from_compose()
+		else:
+			print("Building Dockerfile")
+			container_id = build_from_dockerfile(client, args)
+		
+		container = client.containers.get(container_id)
+		atexit.register(lambda: container.kill())
+		print("Registered an atexit container killer")
+	except docker.errors.APIError as err:
+		# work even if the container is already running; in this case, find it and don't kill it when we're done
+		if not err.is_server_error():
+			raise err
+		elif "bind: address already in use" in err.explanation:
+			print("Error: target port is already in use, most likely not by a container")
+			exit(1)
+		elif "port is already allocated" not in err.explanation:
+			raise err
+		
+		print("Error: the target port is already allocated; finding target container")
+		containers: list[docker.models.containers.Container] = client.containers.list()
+		container = next((c for c in containers if any(int(port_proto.split('/')[0]) == args.port for port_proto in c.ports)), None)
+		if container is None:
+			print("Error: port is already allocated by a container, but it can't found")
+			exit(1)
 
-	print(f"Container: {container_id}")
-	atexit.register(lambda: client.containers.get(container_id).kill())
+	print(f"Container: {container.id}")
 
-	before = get_procs(client, container_id)
+	before = get_procs(container)
 	print(f"PIDs before connecting: {[proc.pid for proc in before]}")
 
 	sleep_ms = 50
@@ -122,7 +146,7 @@ def main():
 	print(f"Sleeping for {sleep_ms}ms to allow the process to start completely")
 	time.sleep(sleep_ms / 1000)
 
-	after = get_procs(client, container_id)
+	after = get_procs(container)
 	print(f"PIDs after connecting: {[proc.pid for proc in after]}")
 
 	new_procs = list(set(after) - set(before))
@@ -132,8 +156,6 @@ def main():
 		print("Error: Expected exactly one new process")
 		target_proc = choose_proc(new_procs)
 		if target_proc is None:
-			print("Stopping container")
-			client.containers.get(container_id).stop()
 			return
 	else:
 		target_proc = new_procs[0]
@@ -150,13 +172,13 @@ def main():
 	chroot = parse_mountinfo(mountinfo).get('/')
 	if chroot:
 		print(f"Detected chroot at {chroot}; fixing library paths")
-		libraries = [f"{chroot}/{path}" for path in libraries]
+		libraries = [chroot+path for path in libraries]
 
 	print("Copying libraries")
 	for name, path in zip(lib_names, libraries):
 		print(f"Copying {path}")
 
-		bits, stat = client.containers.get(container_id).get_archive(path)
+		bits, stat = container.get_archive(path)
 		with open(name, "wb") as f:
 			for chunk in bits:
 				f.write(chunk)
@@ -166,9 +188,6 @@ def main():
 		
 		# Set the same permissions as the original file
 		os.chmod(name, stat["mode"])
-
-	print("Stopping container")
-	client.containers.get(container_id).kill()
 
 if __name__ == "__main__":
 	main()
