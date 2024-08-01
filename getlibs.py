@@ -192,6 +192,7 @@ def main():
 	print(f"PIDs after connecting: {[proc.pid for proc in after]}")
 
 	target_proc = choose_proc(before, after, args)
+	print(f"Target process: {target_proc.exe()}")
 
 	print("Reading process maps")
 	maps = read_super(f"/proc/{target_proc.pid}/maps")
