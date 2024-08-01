@@ -42,6 +42,9 @@ def build_from_dockerfile(client: docker.DockerClient, args: argparse.Namespace)
 		args.privileged = True
 		print("Detected pwn.red/jail Dockerfile, running as privileged")
 	
+	# run as subprocess so that the user can see the container buile
+	subprocess.run(["docker", "build", "."])
+	# and then re run to get the image id
 	img, _ = client.images.build(path=".")
 	print(f"Image: {img.id}")
 
@@ -50,6 +53,9 @@ def build_from_dockerfile(client: docker.DockerClient, args: argparse.Namespace)
 
 def build_from_compose() -> str:
 	subprocess.run(["docker", "compose", "up", "--build", "-d"])
+	# actually could get the container name from the docker compose subprocess stderr
+	# i won't now cause this works and i think that might be 'unstable',
+	# especially if the container immediately starts printing stuff
 	result = subprocess.run(["docker", "compose", "ps", "-q"], capture_output=True)
 	return result.stdout.decode().strip()
 
