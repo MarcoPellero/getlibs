@@ -53,18 +53,31 @@ def build_from_compose() -> str:
 	result = subprocess.run(["docker", "compose", "ps", "-q"], capture_output=True)
 	return result.stdout.decode().strip()
 
+def read_super(path: str) -> str:
+	try:
+		with open(path) as f:
+			return f.read()
+	except PermissionError:
+		print("Error: Permission denied; trying again with sudo")
+		return subprocess.run(["sudo", "cat", path], capture_output=True).stdout.decode()
+
 def get_libs(mapfile: str) -> list[str]:
 	# file structure is:
 	# address perms offset dev inode pathname
 	# pathname can be blank, for mmap()'d memory
  
-	maps = [m.split() for m in mapfile.split('\n')]
+	maps = [m.split() for m in mapfile.splitlines()]
 	maps = [m for m in maps if len(m) == 6] # filter out mmap()'d memory
 	libs = [m[5] for m in maps if not m[5].startswith('[')] # filter out [stack], [heap], [vdso], etc.
 	libs = list(dict.fromkeys(libs)) # remove duplicates
 	libs = libs[1:] # remove the executable itself (i hope this always works..)
 
 	return libs
+
+def parse_mountinfo(raw: str) -> dict[str, str]:
+	mounts = [m.split() for m in raw.splitlines(False)]
+	mappings = {m[4]: m[3] for m in mounts}
+	return mappings
 
 def main():
 	parser = argparse.ArgumentParser()
@@ -119,20 +132,17 @@ def main():
 		print(f"Target process: PID={target_proc.pid}; CMD=({' '.join(target_proc.cmdline())})")
 
 	print("Reading process maps")
-	try:
-		with open(f"/proc/{target_proc.pid}/maps") as f:
-			maps = f.read()
-	except PermissionError:
-		print("Error: Permission denied; trying again with sudo")
-		maps = subprocess.run(["sudo", "cat", f"/proc/{target_proc.pid}/maps"], capture_output=True).stdout.decode()
-	
+	maps = read_super(f"/proc/{target_proc.pid}/maps")
 	libraries = get_libs(maps)
 	lib_names = [lib.split('/')[-1] for lib in libraries]
 	print(f"Libraries: {lib_names}")
 
-	if is_pwnred():
-		print("Detected pwn.red/jail Dockerfile, fixing library paths for its chroot at /srv/")
-		libraries = [f"/srv{path}" for path in libraries]
+	print("Checking for chroot")
+	mountinfo = read_super(f"/proc/{target_proc.pid}/mountinfo")
+	chroot = parse_mountinfo(mountinfo).get('/')
+	if chroot:
+		print(f"Detected chroot at {chroot}; fixing library paths")
+		libraries = [f"{chroot}/{path}" for path in libraries]
 
 	print("Copying libraries")
 	for name, path in zip(lib_names, libraries):
