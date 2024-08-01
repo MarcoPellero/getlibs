@@ -7,8 +7,6 @@ import time
 import os
 import subprocess
 import docker.errors
-import docker.models
-import docker.models.configs
 import docker.models.containers
 import psutil
 import atexit
@@ -90,27 +88,35 @@ def parse_mountinfo(raw: str) -> dict[str, str]:
 	mappings = {m[4]: m[3] for m in mounts}
 	return mappings
 
-def main():
-	parser = argparse.ArgumentParser()
-	parser.add_argument("-p", "--port", help="Port to expose and connect to", type=int, required=True)
-	parser.add_argument("--privileged", help="Run the container as privileged", action="store_true")
-	args = parser.parse_args()
+def find_container_by_port(client: docker.DockerClient, port: int) -> docker.models.containers.Container:
+	containers: list[docker.models.containers.Container] = client.containers.list()
+	return next((c for c in containers if any(int(port_proto.split('/')[0]) == port for port_proto in c.ports)), None)
 
-	client = docker.from_env()
-	container = None
+def get_container(client: docker.DockerClient, args: argparse.Namespace) -> docker.models.containers.Container:
+	is_compose = "docker-compose.yml" in os.listdir()
+	is_dockerfile = "Dockerfile" in os.listdir()
+
+	if not is_compose and not is_dockerfile:
+		print("No docker setup found; checking for live container")
+		container = find_container_by_port(client, args.port)
+		if container is None:
+			print("Error: no live container found")
+			exit(1)
+		
+		return container
+	
 	try:
-		if "docker-compose.yml" in os.listdir():
+		if is_compose:
 			print("Detected docker-compose.yml")
 			container_id = build_from_compose()
-		else:
+		elif is_dockerfile:
 			print("Building Dockerfile")
 			container_id = build_from_dockerfile(client, args)
-		
+	
 		container = client.containers.get(container_id)
 		atexit.register(lambda: container.kill())
 		print("Registered an atexit container killer")
 	except docker.errors.APIError as err:
-		# work even if the container is already running; in this case, find it and don't kill it when we're done
 		if not err.is_server_error():
 			raise err
 		elif "bind: address already in use" in err.explanation:
@@ -120,12 +126,21 @@ def main():
 			raise err
 		
 		print("Error: the target port is already allocated; finding target container")
-		containers: list[docker.models.containers.Container] = client.containers.list()
-		container = next((c for c in containers if any(int(port_proto.split('/')[0]) == args.port for port_proto in c.ports)), None)
+		container = find_container_by_port(client, args.port)
 		if container is None:
 			print("Error: port is already allocated by a container, but it can't found")
 			exit(1)
+	
+	return container
 
+def main():
+	parser = argparse.ArgumentParser()
+	parser.add_argument("-p", "--port", help="Port to expose and connect to", type=int, required=True)
+	parser.add_argument("--privileged", help="Run the container as privileged", action="store_true")
+	args = parser.parse_args()
+
+	client = docker.from_env()
+	container = get_container(client, args)
 	print(f"Container: {container.id}")
 
 	before = get_procs(container)
