@@ -192,7 +192,7 @@ def main():
 	print(f"PIDs after connecting: {[proc.pid for proc in after]}")
 
 	target_proc = choose_proc(before, after, args)
-	print(f"Target process: {target_proc.exe()}")
+	print(f"Target process: {target_proc.name()}")
 
 	print("Reading process maps")
 	maps = read_super(f"/proc/{target_proc.pid}/maps")
@@ -203,7 +203,7 @@ def main():
 	print("Checking for chroot")
 	mountinfo = read_super(f"/proc/{target_proc.pid}/mountinfo")
 	chroot = parse_mountinfo(mountinfo).get('/')
-	if chroot:
+	if chroot != '/':
 		print(f"Detected chroot at {chroot}; fixing library paths")
 		libraries = [chroot+path for path in libraries]
 
