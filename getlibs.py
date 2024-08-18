@@ -119,7 +119,7 @@ def find_container_by_port(client: docker.DockerClient, port: int) -> docker.mod
 	return next((c for c in containers if any(int(port_proto.split('/')[0]) == port for port_proto in c.ports)), None)
 
 def get_container(client: docker.DockerClient, args: argparse.Namespace) -> docker.models.containers.Container:
-	is_compose = "docker-compose.yml" in os.listdir()
+	is_compose = any(f.startswith("docker-compose") for f in os.listdir())
 	is_dockerfile = "Dockerfile" in os.listdir()
 
 	if not is_compose and not is_dockerfile:
