@@ -17,11 +17,15 @@ def get_procs(container: docker.models.containers.Container) -> list[psutil.Proc
 	pids = [int(proc[1]) for proc in procs]
 	return [psutil.Process(pid) for pid in pids]
 
-def choose_proc(before: list[psutil.Process], after: list[psutil.Process], args: argparse.Namespace) -> psutil.Process:
+def choose_proc(before: list[psutil.Process], after: list[psutil.Process], args: argparse.Namespace) -> psutil.Process|None:
 	new = list(set(after) - set(before))
 	print(f"New PIDs: {[proc.pid for proc in new]}")
+
 	if len(new) == 1:
 		return new[0]
+	elif len(new) == 0:
+		print("Warning: no new processes found, this might be because the challenge doesn't spawn a process for each connection; selecting from already existing processes")
+		new = before
 
 	if not args.no_proc_heuristics:
 		"""
@@ -192,6 +196,8 @@ def main():
 	print(f"PIDs after connecting: {[proc.pid for proc in after]}")
 
 	target_proc = choose_proc(before, after, args)
+	if target_proc is None:
+		return
 	print(f"Target process: {target_proc.name()}")
 
 	print("Reading process maps")
