@@ -206,27 +206,10 @@ def main():
 	lib_names = [lib.split('/')[-1] for lib in libraries]
 	print(f"Libraries: {lib_names}")
 
-	print("Checking for chroot")
-	mountinfo = read_super(f"/proc/{target_proc.pid}/mountinfo")
-	chroot = parse_mountinfo(mountinfo).get('/')
-	if chroot != '/':
-		print(f"Detected chroot at {chroot}; fixing library paths")
-		libraries = [chroot+path for path in libraries]
-
 	print("Copying libraries")
 	for name, path in zip(lib_names, libraries):
 		print(f"Copying {path}")
-
-		bits, stat = container.get_archive(path)
-		with open(name, "wb") as f:
-			for chunk in bits:
-				f.write(chunk)
-		
-		# Unpack the tarball
-		os.system(f"tar -xf {name}")
-		
-		# Set the same permissions as the original file
-		os.chmod(name, stat["mode"])
+		os.system(f"cp /proc/{target_proc.pid}/root{path} .")
 
 if __name__ == "__main__":
 	main()
