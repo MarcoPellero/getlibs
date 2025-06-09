@@ -100,23 +100,18 @@ def read_super(path: str) -> str:
 		print("Error: Permission denied; trying again with sudo")
 		return subprocess.run(["sudo", "cat", path], capture_output=True).stdout.decode()
 
-def get_libs(mapfile: str) -> list[str]:
+def get_libs(mapfile: str) -> list[tuple[str, int]]:
 	# file structure is:
 	# address perms offset dev inode pathname
 	# pathname can be blank, for mmap()'d memory
  
 	maps = [m.split() for m in mapfile.splitlines()]
 	maps = [m for m in maps if len(m) == 6] # filter out mmap()'d memory
-	libs = [m[5] for m in maps if not m[5].startswith('[')] # filter out [stack], [heap], [vdso], etc.
+	libs = [(m[5], int(m[4])) for m in maps if not m[5].startswith('[')] # filter out [stack], [heap], [vdso], etc.
 	libs = list(dict.fromkeys(libs)) # remove duplicates
 	libs = libs[1:] # remove the executable itself (i hope this always works..)
 
 	return libs
-
-def parse_mountinfo(raw: str) -> dict[str, str]:
-	mounts = [m.split() for m in raw.splitlines(False)]
-	mappings = {m[4]: m[3] for m in mounts}
-	return mappings
 
 def find_container_by_port(client: docker.DockerClient, port: int) -> docker.models.containers.Container:
 	containers: list[docker.models.containers.Container] = client.containers.list()
@@ -203,13 +198,21 @@ def main():
 	print("Reading process maps")
 	maps = read_super(f"/proc/{target_proc.pid}/maps")
 	libraries = get_libs(maps)
-	lib_names = [lib.split('/')[-1] for lib in libraries]
+	lib_names = [lib[0].split('/')[-1] for lib in libraries]
 	print(f"Libraries: {lib_names}")
 
 	print("Copying libraries")
-	for name, path in zip(lib_names, libraries):
+	for path, inode in libraries:
 		print(f"Copying {path}")
-		os.system(f"cp /proc/{target_proc.pid}/root{path} .")
+		full_path = f"/proc/{target_proc.pid}/root{path}"
+
+		# i guess the inode could be wrong if like /lib is mounted weird or something idk
+		real_inode = os.stat(full_path).st_ino
+		if real_inode != inode:
+			print(f"ERROR: the inode for {path} is {inode}, but the inode of {full_path} is {real_inode}. Not copying this file. Find the correct file with `find / -inode {real_inode}` (slow)")
+			continue
+
+		os.system(f"cp {full_path} .")
 
 if __name__ == "__main__":
 	main()
