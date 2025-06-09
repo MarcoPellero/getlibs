@@ -10,6 +10,7 @@ import docker.errors
 import docker.models.containers
 import psutil
 import atexit
+import shlex
 
 def get_procs(container: docker.models.containers.Container) -> list[psutil.Process]:
 	top = container.top()
@@ -202,17 +203,36 @@ def main():
 	print(f"Libraries: {lib_names}")
 
 	print("Copying libraries")
-	for path, inode in libraries:
-		print(f"Copying {path}")
+	inode_mismatches = []
+	for i in range(len(libraries)):
+		path, inode = libraries[i]
+		name = lib_names[i]
+
+		print(f"Copying {name}")
 		full_path = f"/proc/{target_proc.pid}/root{path}"
 
 		# i guess the inode could be wrong if like /lib is mounted weird or something idk
 		real_inode = os.stat(full_path).st_ino
 		if real_inode != inode:
-			print(f"ERROR: the inode for {path} is {inode}, but the inode of {full_path} is {real_inode}. Not copying this file. Find the correct file with `find / -inum {real_inode}` (slow)")
+			print(f"ERROR: the inode for {name} is {inode}, but the inode of {full_path} is {real_inode}. Will resort to searching by inode with `find`")
+			inode_mismatches.append(i)
 			continue
 
 		os.system(f"cp {full_path} .")
+	
+	if not inode_mismatches:
+		return
+
+	# sudo find / \( -inum <inum0> -o -inum <inum1> ... \) -printf '%i %p\n'
+	# finds files with one of these inodes and printf first the inode and then the path; i want the inode too so i can avoid duplicates (hard links)
+	cmd = ["sudo", "find", "/", "("] + " -o ".join(f"-inum {libraries[i][1]}" for i in inode_mismatches).split() + [")", "-printf", "%i %p\\n"]
+	
+	print(f"Ran into {len(inode_mismatches)} inode mismatches; searching with `{shlex.join(cmd)}` (slow)")
+	files = {int(l.split()[0]) : l.split()[1] for l in subprocess.run(cmd, capture_output=True).stdout.decode().splitlines()}
+
+	for i in inode_mismatches:
+		print(f" - {lib_names[i]} found @ {files[libraries[i][1]]}")
+		os.system(f"sudo cp {files[libraries[i][1]]} {lib_names[i]}")
 
 if __name__ == "__main__":
 	main()
