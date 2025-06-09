@@ -209,7 +209,7 @@ def main():
 		# i guess the inode could be wrong if like /lib is mounted weird or something idk
 		real_inode = os.stat(full_path).st_ino
 		if real_inode != inode:
-			print(f"ERROR: the inode for {path} is {inode}, but the inode of {full_path} is {real_inode}. Not copying this file. Find the correct file with `find / -inode {real_inode}` (slow)")
+			print(f"ERROR: the inode for {path} is {inode}, but the inode of {full_path} is {real_inode}. Not copying this file. Find the correct file with `find / -inum {real_inode}` (slow)")
 			continue
 
 		os.system(f"cp {full_path} .")
